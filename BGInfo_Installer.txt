@@ -1,100 +1,163 @@
-### Blake's BGInfo Deployment Script — 100% satisfaction garunteed ###
+### BGINFO INSTALLER — BY BLAKE 🐉 ###
 
-# Variables
-$bgInfoUrl     = "https://download.sysinternals.com/files/BGInfo.zip"
-$zipPath       = "$env:TEMP\BGInfo.zip"
-$extractPath   = "$env:TEMP\BGInfo"
-$bginfoExe     = "Bginfo64.exe"
-$bgiFile       = "StordLayout.bgi"
-$wallpaperFile = "Stord_Basic_Black_3840x2160.png"
+# ─────────────────────────────────────────────
+# Configuration
+# ─────────────────────────────────────────────
 
-# Paths
-$bgiSource        = "C:\Windows\Temp\$bgiFile"
-$wallpaperSource  = "C:\Windows\Temp\$wallpaperFile"
-$installPath      = "C:\ProgramData\BGInfo"
-$bginfoDest       = Join-Path $installPath $bginfoExe
-$bgiDest          = Join-Path $installPath $bgiFile
-$wallpaperDest    = Join-Path $installPath $wallpaperFile
+$tempFolder      = "C:\Windows\Temp"
+$publicBGFolder  = "C:\Users\Public\BGInfo"
+$bginfoExe       = "Bginfo64.exe"
+$bgiFile         = "StordLayout.bgi"
+$wallpaperPng    = "Stord_Basic_Black_3840x2160.png"
+$wallpaperBmp    = "Stord_Basic_Black_3840x2160.bmp"
+$zipName         = "BGInfo.zip"
+$bginfoUrl       = "https://download.sysinternals.com/files/BGInfo.zip"
 
-# Ensure the ProgramData install path exists
-if (!(Test-Path $installPath)) {
-    New-Item -Path $installPath -ItemType Directory -Force | Out-Null
-}
+$filesToMove = @($bginfoExe, $bgiFile, $wallpaperPng, $zipName)
 
-# Download and extract BGInfo
-Invoke-WebRequest -Uri $bgInfoUrl -OutFile $zipPath
-Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
-Copy-Item -Path (Join-Path $extractPath $bginfoExe) -Destination $bginfoDest -Force
+# ─────────────────────────────────────────────
+# Create install folder and move files
+# ─────────────────────────────────────────────
 
-# Copy layout and wallpaper
-Copy-Item -Path $bgiSource -Destination $bgiDest -Force
-Copy-Item -Path $wallpaperSource -Destination $wallpaperDest -Force
+New-Item -Path $publicBGFolder -ItemType Directory -Force | Out-Null
 
-# Get stord user profiles
-$stordUsers = Get-ChildItem 'C:\Users' -Directory | Where-Object {
-    $_.Name -match '(?i)stord'
-}
-
-# Loop through stord users and set wallpaper in their registry hive
-foreach ($user in $stordUsers) {
-    $ntUserDat = Join-Path $user.FullName "NTUSER.DAT"
-    if (!(Test-Path $ntUserDat)) {
-        Write-Warning "Skipping $($user.Name) — NTUSER.DAT not found"
-        continue
+foreach ($fileName in $filesToMove) {
+    $src = Join-Path $tempFolder $fileName
+    if (Test-Path $src) {
+        Move-Item -Path $src -Destination $publicBGFolder -Force
     }
-
-    try {
-        $sid = (Get-LocalUser -Name $user.Name).SID.Value
-    } catch {
-        Write-Warning "Skipping $($user.Name) — couldn't get SID"
-        continue
-    }
-
-    $regKey = "HKU\$sid"
-    reg load "$regKey" "$ntUserDat" | Out-Null
-
-    Set-ItemProperty -Path "$regKey\Control Panel\Desktop" -Name Wallpaper -Value $wallpaperDest
-    Set-ItemProperty -Path "$regKey\Control Panel\Desktop" -Name WallpaperStyle -Value "10"
-    Set-ItemProperty -Path "$regKey\Control Panel\Desktop" -Name TileWallpaper -Value "0"
-
-    reg unload "$regKey" | Out-Null
-
-    Write-Host "Wallpaper set for user: $($user.Name)"
 }
 
-# Also apply wallpaper immediately for current user
-Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name Wallpaper -Value $wallpaperDest
-Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name WallpaperStyle -Value "10"
-Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop\' -Name TileWallpaper -Value "0"
+# ─────────────────────────────────────────────
+# Download BGInfo if not present
+# ─────────────────────────────────────────────
+
+if (!(Test-Path "$publicBGFolder\$zipName")) {
+    Invoke-WebRequest -Uri $bginfoUrl -OutFile "$publicBGFolder\$zipName"
+}
+
+# ─────────────────────────────────────────────
+# Extract and move Bginfo64.exe (skip if exists)
+# ─────────────────────────────────────────────
+
+$extractTemp = "$publicBGFolder\_extract"
+Expand-Archive -Path "$publicBGFolder\$zipName" -DestinationPath $extractTemp -Force
+
+$exeItem = Get-ChildItem -Path $extractTemp -Filter "Bginfo64.exe" -Recurse -File | Select-Object -First 1
+$destPath = "$publicBGFolder\$bginfoExe"
+if ($exeItem -and !(Test-Path $destPath)) {
+    Move-Item -Path $exeItem.FullName -Destination $destPath
+} elseif (!$exeItem) {
+    Write-Host "❌ BGInfo executable not found in ZIP!" -ForegroundColor Red
+    exit 1
+}
+Remove-Item $extractTemp -Recurse -Force
+
+# ─────────────────────────────────────────────
+# Convert PNG wallpaper to BMP for BGInfo
+# ─────────────────────────────────────────────
+
+Add-Type -AssemblyName System.Drawing
+$pngPath = "$publicBGFolder\$wallpaperPng"
+$bmpPath = "$publicBGFolder\$wallpaperBmp"
+
+if (Test-Path $pngPath) {
+    $img = [System.Drawing.Image]::FromFile($pngPath)
+    $img.Save($bmpPath, [System.Drawing.Imaging.ImageFormat]::Bmp)
+    $img.Dispose()
+    Write-Host "✅ Converted wallpaper to BMP format."
+} else {
+    Write-Host "⚠️ PNG wallpaper not found at $pngPath" -ForegroundColor Yellow
+}
+
+# ─────────────────────────────────────────────
+# Remove wallpaper enforcement policies
+# ─────────────────────────────────────────────
+
+$regPaths = @(
+    "HKLM:\Software\Policies\Microsoft\Windows\Personalization",
+    "HKCU:\Software\Policies\Microsoft\Windows\Personalization"
+)
+
+foreach ($regPath in $regPaths) {
+    if (Test-Path $regPath) {
+        Remove-ItemProperty -Path $regPath -Name "Wallpaper" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $regPath -Name "WallpaperStyle" -ErrorAction SilentlyContinue
+        Write-Host "🔓 Removed wallpaper policy from $regPath"
+    }
+}
+
 RUNDLL32.EXE user32.dll,UpdatePerUserSystemParameters
 
-# Create BGInfo shortcuts for stord users
-foreach ($user in $stordUsers) {
-    $startupPath = Join-Path $user.FullName "AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
-    $shortcutPath = Join-Path $startupPath "BGInfo.lnk"
+# ─────────────────────────────────────────────
+# Ensure public folder is accessible to users
+# ─────────────────────────────────────────────
 
-    if (!(Test-Path $startupPath)) {
-        Write-Warning "Skipping '$($user.Name)' — no Startup folder found."
-        continue
-    }
+cmd /c "icacls `"$publicBGFolder`" /grant *S-1-1-0:(OI)(CI)F /T"
 
-    # Create shortcut
-    $shell = New-Object -ComObject "WScript.Shell"
-    $Shortcut = $shell.CreateShortcut($shortcutPath)
-    $Shortcut.TargetPath = $bginfoDest
-    $Shortcut.Arguments = "`"$bgiDest`" /timer:0 /silent /nolicprompt"
-    $Shortcut.WorkingDirectory = $installPath
-    $Shortcut.Save()
+# ─────────────────────────────────────────────
+# Run BGInfo as the logged-in user (not SYSTEM)
+# ─────────────────────────────────────────────
 
-    Write-Host "Created BGInfo shortcut for: $($user.Name)"
+$exePath = "$publicBGFolder\$bginfoExe"
+$bgiPath = "$publicBGFolder\$bgiFile"
+$logFile = "$publicBGFolder\BGInfo_Debug.log"
+$runLog = "$publicBGFolder\BGInfo_RunLog.txt"
+$taskName = "RunBGInfoOnce"
+
+function Log($message) {
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $entry = "[$timestamp] $message"
+    Write-Host $entry
+    Add-Content -Path $logFile -Value $entry
 }
 
-# Run BGInfo now for current user
-Start-Process -FilePath $bginfoDest -ArgumentList "`"$bgiDest`" /timer:0 /silent /nolicprompt"
+Log "`n=== Starting BGInfo Launch Phase ==="
+Log "Running as: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+Log "BGInfo EXE Path: $exePath"
+Log "BGInfo Layout Path: $bgiPath"
 
-# Clean up temp files
-Remove-Item $zipPath -Force
-Remove-Item $extractPath -Recurse -Force
+if (Test-Path $publicBGFolder) {
+    Log "Public BGInfo folder contents:"
+    Get-ChildItem -Path $publicBGFolder | ForEach-Object {
+        Log " - $_"
+    }
+} else {
+    Log "❌ BGInfo folder does not exist!"
+}
 
-# Done!
-Write-Host "`BGInfo deployed! Thanks for using BlakeWare™ 🐉"
+if ((Test-Path $exePath) -and (Test-Path $bgiPath)) {
+    Log "✅ BGInfo and layout file found. Scheduling for logged-in user..."
+
+    # Accept EULA for the logged-in user via their SID
+    try {
+        $user = (Get-WmiObject -Class Win32_ComputerSystem).UserName
+        $sid = (New-Object System.Security.Principal.NTAccount($user)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+        $bginfoKey = "Registry::HKEY_USERS\$sid\Software\Sysinternals\BGInfo"
+        if (-not (Test-Path $bginfoKey)) {
+            New-Item -Path $bginfoKey -Force | Out-Null
+        }
+        New-ItemProperty -Path $bginfoKey -Name "EulaAccepted" -Value 1 -PropertyType DWord -Force | Out-Null
+        Log "✅ BGInfo EULA accepted in registry for user SID $sid"
+    } catch {
+        Log "⚠️ Failed to set EULA accepted flag: $_"
+    }
+
+    # Schedule the task
+    $fullCmd = 'timeout /t 3 && start "" "' + $exePath + '" "' + $bgiPath + '" /nolicprompt /timer:0 >> "' + $runLog + '" 2>&1'
+    $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c $fullCmd" -WorkingDirectory $publicBGFolder
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
+
+    try {
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force
+        Log "✅ Scheduled BGInfo to run for user $user at next login."
+    } catch {
+        Log "❌ Failed to register scheduled task: $_"
+    }
+} else {
+    if (!(Test-Path $exePath)) { Log "❌ BGInfo executable missing at $exePath" }
+    if (!(Test-Path $bgiPath)) { Log "❌ Layout file missing at $bgiPath" }
+}
+
+Log "=== BGInfo Script Finished ===`n"
